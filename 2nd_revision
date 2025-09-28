@@ -1,0 +1,333 @@
+import os
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from PIL import Image, ImageEnhance, ImageTk, ImageOps
+from datetime import datetime
+
+class ModernGIFConverter:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("GIF to Arduino Code Producer")
+        self.root.geometry("620x750") # Give the window a more vertical, modern aspect ratio
+        self.root.configure(bg="#2c3e50")
+        self.original_frame = None
+
+        # --- Style Configuration ---
+        self.setup_styles()
+
+        # --- Main Layout Frames ---
+        main_frame = ttk.Frame(root, style="Main.TFrame")
+        main_frame.pack(padx=20, pady=20, fill="both", expand=True)
+
+        self.create_file_widgets(main_frame)
+        self.create_config_widgets(main_frame)
+        self.create_preview_widgets(main_frame)
+        self.create_output_widgets(main_frame)
+        
+        self.on_target_change()
+        self.log_message("Ready. Please select a GIF file to begin.")
+
+    def setup_styles(self):
+        # A more professional, modern color palette
+        BG_COLOR = "#2c3e50"
+        FRAME_BG = "#34495e"
+        TEXT_COLOR = "#ecf0f1"
+        ACCENT_COLOR = "#3498db"
+        ENTRY_BG = "#2c3e50"
+        
+        style = ttk.Style()
+        style.theme_use('clam')
+
+        # General Widget Styles
+        style.configure("TLabel", foreground=TEXT_COLOR, background=FRAME_BG, font=("Segoe UI", 10))
+        style.configure("TButton", foreground=TEXT_COLOR, background=ACCENT_COLOR, font=("Segoe UI", 10, "bold"), borderwidth=0)
+        style.map("TButton", background=[('active', '#2980b9')]) # Darker blue on hover
+        style.configure("TEntry", fieldbackground=ENTRY_BG, foreground=TEXT_COLOR, insertcolor=TEXT_COLOR, font=("Segoe UI", 10))
+        style.configure("TCombobox", fieldbackground=ENTRY_BG, foreground=TEXT_COLOR, background=ENTRY_BG, arrowcolor=TEXT_COLOR, font=("Segoe UI", 10))
+        style.map('TCombobox', fieldbackground=[('readonly', ENTRY_BG)])
+        style.configure("TCheckbutton", foreground=TEXT_COLOR, background=FRAME_BG, font=("Segoe UI", 10))
+        style.map("TCheckbutton", indicatorcolor=[('selected', ACCENT_COLOR)])
+        
+        # Frame Styles
+        style.configure("Main.TFrame", background=BG_COLOR)
+        style.configure("Card.TFrame", background=FRAME_BG, relief="raised", borderwidth=1)
+        style.configure("Card.TLabel", foreground=ACCENT_COLOR, background=FRAME_BG, font=("Segoe UI", 12, "bold"))
+
+        # Progress Bar and Scrollbar
+        style.configure("Horizontal.TProgressbar", troughcolor=BG_COLOR, background=ACCENT_COLOR)
+        style.configure("Vertical.TScrollbar", background=FRAME_BG, troughcolor=BG_COLOR, bordercolor=FRAME_BG, arrowcolor=TEXT_COLOR)
+
+    def create_file_widgets(self, parent):
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=15)
+        frame.pack(fill="x", pady=(0, 10))
+        
+        ttk.Label(frame, text="File Selection", style="Card.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
+
+        ttk.Label(frame, text="Input GIF").grid(row=1, column=0, sticky="w")
+        self.input_path = ttk.Entry(frame, width=50); self.input_path.grid(row=1, column=1, padx=10, sticky="ew")
+        ttk.Button(frame, text="Browse...", command=self.load_input_files).grid(row=1, column=2)
+
+        ttk.Label(frame, text="Output Sketch").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        self.output_path = ttk.Entry(frame, width=50); self.output_path.grid(row=2, column=1, padx=10, pady=(10, 0), sticky="ew")
+        ttk.Button(frame, text="Browse...", command=self.load_output_file).grid(row=2, column=2, pady=(10, 0))
+        
+        frame.columnconfigure(1, weight=1)
+
+    def create_config_widgets(self, parent):
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=15)
+        frame.pack(fill="x", pady=10)
+
+        ttk.Label(frame, text="Configuration", style="Card.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 15))
+
+        ttk.Label(frame, text="Target Library").grid(row=1, column=0, sticky="w")
+        self.target_library_var = tk.StringVar(value="TFT_eSPI (TFT)")
+        self.target_library_combo = ttk.Combobox(frame, textvariable=self.target_library_var, values=["Adafruit SSD1306 (OLED)", "Adafruit ILI9341 (TFT)", "TFT_eSPI (TFT)", "LVGL (via TFT_eSPI)"], state="readonly", width=25)
+        self.target_library_combo.grid(row=1, column=1, columnspan=2, padx=10, sticky="w")
+        self.target_library_combo.bind("<<ComboboxSelected>>", self.on_target_change)
+
+        ttk.Label(frame, text="Dimensions (W x H)").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        size_frame = ttk.Frame(frame, style="Card.TFrame"); size_frame.grid(row=2, column=1, columnspan=2, padx=10, pady=(10, 0), sticky="w")
+        self.width_entry = ttk.Entry(size_frame, width=8); self.width_entry.pack(side="left"); self.width_entry.insert(0, "64")
+        self.width_entry.bind("<KeyRelease>", lambda e: self.update_preview())
+        ttk.Label(size_frame, text=" x ").pack(side="left", padx=5)
+        self.height_entry = ttk.Entry(size_frame, width=8); self.height_entry.pack(side="left"); self.height_entry.insert(0, "64")
+        self.height_entry.bind("<KeyRelease>", lambda e: self.update_preview())
+
+        ttk.Label(frame, text="Gamma").grid(row=3, column=0, sticky="w", pady=(10, 0))
+        gamma_frame = ttk.Frame(frame, style="Card.TFrame"); gamma_frame.grid(row=3, column=1, columnspan=2, padx=10, pady=(10, 0), sticky="ew")
+        self.gamma_value = tk.DoubleVar(value=1.0)
+        self.gamma_slider = ttk.Scale(gamma_frame, from_=0.1, to=3.0, orient="horizontal", variable=self.gamma_value, command=self.update_preview_slider)
+        self.gamma_slider.pack(side="left", fill="x", expand=True)
+        self.gamma_label = ttk.Label(gamma_frame, text=f" {self.gamma_value.get():.2f}", width=5); self.gamma_label.pack(side="left", padx=(5, 0))
+
+        ttk.Label(frame, text="Frame Delay (ms)").grid(row=4, column=0, sticky="w", pady=(10, 0))
+        self.delay_entry = ttk.Entry(frame, width=10); self.delay_entry.grid(row=4, column=1, padx=10, pady=(10, 0), sticky="w"); self.delay_entry.insert(0, "30")
+
+        self.invert_var = tk.IntVar()
+        self.invert_checkbutton = ttk.Checkbutton(frame, text="Invert Colors (OLED)", variable=self.invert_var, command=self.update_preview)
+        self.invert_checkbutton.grid(row=5, column=1, padx=10, pady=(10, 0), sticky="w")
+        
+        frame.columnconfigure(1, weight=1)
+
+    def create_preview_widgets(self, parent):
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=15)
+        frame.pack(fill="x", pady=10)
+
+        ttk.Label(frame, text="Live Preview", style="Card.TLabel").pack(anchor="w")
+        self.canvas_bg = "#2c3e50"
+        self.canvas = tk.Canvas(frame, width=128, height=128, bg=self.canvas_bg, highlightthickness=1, highlightbackground=self.canvas_bg)
+        self.canvas.pack(pady=10)
+
+    def create_output_widgets(self, parent):
+        control_frame = ttk.Frame(parent, style="Main.TFrame")
+        control_frame.pack(fill="x", pady=10)
+        ttk.Button(control_frame, text="Generate Arduino Code", command=self.process_gif, style="TButton").pack(ipady=5)
+
+        output_frame = ttk.Frame(parent, style="Card.TFrame", padding=15)
+        output_frame.pack(fill="both", expand=True, pady=10)
+        
+        ttk.Label(output_frame, text="Log Output", style="Card.TLabel").pack(anchor="w", pady=(0, 5))
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(output_frame, variable=self.progress_var, maximum=100, style="Horizontal.TProgressbar")
+        self.progress_bar.pack(fill="x", pady=(0, 10))
+
+        log_text_frame = ttk.Frame(output_frame, style="Card.TFrame")
+        log_text_frame.pack(fill="both", expand=True)
+        self.log_text = tk.Text(log_text_frame, height=5, bg="#2c3e50", fg="#ecf0f1", bd=0, font=("Consolas", 9), relief="flat")
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        log_scrollbar = ttk.Scrollbar(log_text_frame, command=self.log_text.yview, style="Vertical.TScrollbar")
+        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.log_text.config(yscrollcommand=log_scrollbar.set)
+
+    # --- Backend Logic (mostly unchanged) ---
+    def log_message(self, message):
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
+        self.log_text.see(tk.END)
+        self.root.update_idletasks()
+
+    def load_input_files(self):
+        files = filedialog.askopenfilenames(title="Select GIF files", filetypes=[("GIF Files", "*.gif")])
+        if files:
+            self.input_path.delete(0, tk.END); self.input_path.insert(0, ";".join(files))
+            self.load_preview(files[0])
+            first_file_path = files[0]
+            base_name = os.path.splitext(os.path.basename(first_file_path))[0]
+            dir_name = os.path.dirname(first_file_path)
+            suggested_path = os.path.join(dir_name, f"{base_name}_sketch", f"{base_name}_sketch.ino")
+            self.output_path.delete(0, tk.END); self.output_path.insert(0, suggested_path)
+            self.log_message(f"Loaded '{os.path.basename(first_file_path)}'.")
+
+    def load_output_file(self):
+        file_path = filedialog.asksaveasfilename(defaultextension=".ino", filetypes=[("Arduino Sketches", "*.ino")])
+        if file_path:
+            self.output_path.delete(0, tk.END); self.output_path.insert(0, file_path)
+
+    def load_preview(self, gif_path):
+        try:
+            gif = Image.open(gif_path)
+            gif.seek(0)
+            self.original_frame = gif.copy()
+            self.update_preview()
+        except Exception as e:
+            self.log_message(f"Error loading preview: {e}")
+
+    def on_target_change(self, event=None):
+        target = self.target_library_var.get()
+        if "OLED" in target:
+            self.invert_checkbutton.config(state="normal")
+        else:
+            self.invert_checkbutton.config(state="disabled")
+            self.invert_var.set(0)
+        self.update_preview()
+
+    def update_preview_slider(self, value):
+        self.gamma_label.config(text=f" {float(value):.2f}")
+        self.update_preview()
+
+    def update_preview(self, *_):
+        if not self.original_frame: return
+        try:
+            width = max(1, int(self.width_entry.get()))
+            height = max(1, int(self.height_entry.get()))
+            gamma = self.gamma_value.get()
+            invert = bool(self.invert_var.get())
+            target = self.target_library_var.get()
+
+            img = self.original_frame.copy().convert("RGB")
+            enhancer = ImageEnhance.Brightness(img)
+            img = enhancer.enhance(gamma)
+            
+            # Maintain aspect ratio for preview
+            img.thumbnail((width, height), Image.Resampling.LANCZOS)
+            
+            if "OLED" in target:
+                img = img.convert('1', dither=Image.Dither.FLOYDSTEINBERG)
+                if invert: img = ImageOps.invert(img)
+            
+            self.img_tk = ImageTk.PhotoImage(img) # Keep a reference
+            self.canvas.config(width=width, height=height)
+            self.canvas.create_image(width / 2, height / 2, image=self.img_tk)
+        except (ValueError, AttributeError): pass
+
+    def process_gif(self):
+        # This method and the ones it calls (gif_to_frames, image_to_c_array_string, generate_ino_content)
+        # remain unchanged from the previous version. They contain the core logic for file conversion.
+        # I am including them here for completeness.
+        try:
+            input_files = self.input_path.get().split(";")
+            output_file = self.output_path.get()
+            
+            if not all([input_files[0], output_file]):
+                messagebox.showerror("Error", "Please select input and output files.")
+                return
+            
+            self.log_message("Starting code generation...")
+            self.progress_var.set(0)
+            
+            gif_path = input_files[0]
+            if len(input_files) > 1:
+                self.log_message("Warning: Multiple GIFs selected. Only the first will be used.")
+
+            width = int(self.width_entry.get()); height = int(self.height_entry.get())
+            gamma = self.gamma_value.get(); invert = bool(self.invert_var.get())
+            target = self.target_library_var.get(); delay_ms = int(self.delay_entry.get())
+
+            frames = self.gif_to_frames(gif_path)
+            
+            frame_data_strings = []
+            total_frames = len(frames)
+            for i, frame in enumerate(frames):
+                frame_data_strings.append(self.image_to_c_array_string(frame, width, height, gamma, invert, target))
+                progress = ((i + 1) / total_frames) * 100
+                self.progress_var.set(progress)
+                self.root.update_idletasks()
+            
+            gif_data = {
+                'base_name': os.path.splitext(os.path.basename(gif_path))[0].replace("-", "_"),
+                'width': width, 'height': height, 'frame_count': total_frames,
+                'delay': delay_ms, 'frames': frame_data_strings
+            }
+
+            output_dir = os.path.dirname(output_file)
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                self.log_message(f"Created directory: {output_dir}")
+
+            with open(output_file, 'w') as f:
+                f.write(self.generate_ino_content(gif_data))
+            
+            self.log_message("Code generation successful!")
+            messagebox.showinfo("Success", f"Arduino sketch '{os.path.basename(output_file)}' generated successfully!")
+                    
+        except Exception as e:
+            self.log_message(f"ERROR: {str(e)}")
+            messagebox.showerror("Error", f"An error occurred: {str(e)}")
+            
+    def gif_to_frames(self, gif_path):
+        gif = Image.open(gif_path)
+        return [gif.copy().convert("RGBA").convert("RGB") for i in range(gif.n_frames)]
+
+    def image_to_c_array_string(self, image, width, height, gamma, invert, target):
+        img = image.copy()
+        enhancer = ImageEnhance.Brightness(img); img = enhancer.enhance(gamma)
+        img = img.resize((width, height), Image.Resampling.LANCZOS)
+        
+        if "OLED" in target:
+            img = img.convert('1', dither=Image.Dither.FLOYDSTEINBERG)
+            if invert: img = ImageOps.invert(img)
+            pixel_data = list(img.getdata())
+            byte_array = []
+            for i in range(0, len(pixel_data), 8):
+                byte = 0
+                for j in range(8):
+                    if (i + j) < len(pixel_data) and pixel_data[i + j] > 128:
+                        byte |= (1 << (7 - j))
+                byte_array.append(f'0x{byte:02x}')
+            return ', '.join(byte_array)
+        else:
+            pixel_data = list(img.getdata())
+            rgb565_array = []
+            for r, g, b in pixel_data:
+                rgb565 = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+                if "LVGL" in target:
+                    rgb565_array.append(f'0x{rgb565 & 0xFF:02x}, 0x{(rgb565 >> 8) & 0xFF:02x}')
+                else:
+                    rgb565_array.append(f'0x{rgb565:04x}')
+            return ', '.join(rgb565_array)
+
+    def generate_ino_content(self, gif_data):
+        target = self.target_library_var.get()
+        base_name = gif_data['base_name']
+        width, height = gif_data['width'], gif_data['height']
+        frame_count = gif_data['frame_count']
+        delay_ms = gif_data['delay']
+        
+        frame_arrays = ""
+        if "LVGL" in target:
+            for i, frame_data in enumerate(gif_data['frames']):
+                frame_arrays += f"const LV_ATTRIBUTE_MEM_ALIGN LV_ATTRIBUTE_LARGE_CONST uint8_t {base_name}_frame_{i}_map[] = {{{frame_data}}};\n"
+            frame_arrays += "\n"
+            for i in range(frame_count):
+                frame_arrays += f"const lv_img_dsc_t {base_name}_frame_{i} = {{ .header.cf = LV_IMG_CF_TRUE_COLOR, .header.w = {width}, .header.h = {height}, .data_size = {width*height*2}, .data = {base_name}_frame_{i}_map }};\n"
+            frame_arrays += f"\nconst lv_img_dsc_t* const {base_name}_frames[] = {{\n" + ",\n".join([f"    &{base_name}_frame_{i}" for i in range(frame_count)]) + "\n};\n"
+        else:
+            data_type = "const unsigned char" if "OLED" in target else "const uint16_t"
+            for i, frame_data in enumerate(gif_data['frames']):
+                frame_arrays += f"{data_type} {base_name}_frame_{i}[] PROGMEM = {{{frame_data}}};\n"
+            frame_arrays += f"\nconst {data_type}* const {base_name}_frames[] PROGMEM = {{\n" + ",\n".join([f"    {base_name}_frame_{i}" for i in range(frame_count)]) + "\n};\n"
+
+        if "Adafruit SSD1306" in target:
+            return f"""#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>\n\n#define SCREEN_WIDTH 128\n#define SCREEN_HEIGHT 64\n#define OLED_RESET -1\n#define SCREEN_ADDRESS 0x3C\n\nAdafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);\n\n{frame_arrays}\nvoid setup() {{\n  Serial.begin(115200);\n  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {{ Serial.println(F("SSD1306 allocation failed")); for(;;); }}\n  display.clearDisplay();\n  display.display();\n}}\n\nvoid loop() {{\n  for (int i = 0; i < {frame_count}; i++) {{\n    int16_t x = (display.width() - {width}) / 2;\n    int16_t y = (display.height() - {height}) / 2;\n    display.clearDisplay();\n    display.drawBitmap(x, y, {base_name}_frames[i], {width}, {height}, 1);\n    display.display();\n    delay({delay_ms});\n  }}\n}}\n"""
+        elif "Adafruit ILI9341" in target:
+            return f"""#include <Adafruit_GFX.h>\n#include <Adafruit_ILI9341.h>\n#include <SPI.h>\n\n#define TFT_DC  2\n#define TFT_CS  15\n#define TFT_RST 4\n\nAdafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);\n\n{frame_arrays}\nvoid setup() {{\n  Serial.begin(115200);\n  tft.begin();\n  tft.fillScreen(ILI9341_BLACK);\n}}\n\nvoid loop() {{\n  for (int i = 0; i < {frame_count}; i++) {{\n    int16_t x = (tft.width() - {width}) / 2;\n    int16_t y = (tft.height() - {height}) / 2;\n    tft.drawRGBBitmap(x, y, (uint16_t*){base_name}_frames[i], {width}, {height});\n    delay({delay_ms});\n  }}\n}}\n"""
+        elif "TFT_eSPI" in target:
+            return f"""#include <TFT_eSPI.h>\n#include <SPI.h>\n\nTFT_eSPI tft = TFT_eSPI();\n\n{frame_arrays}\nvoid setup() {{\n  Serial.begin(115200);\n  tft.begin();\n  tft.setRotation(1);\n  tft.fillScreen(TFT_BLACK);\n}}\n\nvoid loop() {{\n  for (int i = 0; i < {frame_count}; i++) {{\n    int16_t x = (tft.width() - {width}) / 2;\n    int16_t y = (tft.height() - {height}) / 2;\n    tft.pushImage(x, y, {width}, {height}, (uint16_t*){base_name}_frames[i]);\n    delay({delay_ms});\n  }}\n}}\n"""
+        elif "LVGL" in target:
+            return f"""#include <lvgl.h>\n#include <TFT_eSPI.h>\n\nstatic const uint32_t screenWidth  = 320;\nstatic const uint32_t screenHeight = 240;\nstatic lv_disp_draw_buf_t draw_buf;\nstatic lv_color_t buf[screenWidth * 10];\nTFT_eSPI tft = TFT_eSPI();\n\nvoid my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {{\n    uint32_t w = (area->x2 - area->x1 + 1);\n    uint32_t h = (area->y2 - area->y1 + 1);\n    tft.startWrite();\n    tft.setAddrWindow(area->x1, area->y1, w, h);\n    tft.pushColors((uint16_t*)color_p, w * h, true);\n    tft.endWrite();\n    lv_disp_flush_ready(disp);\n}}\n\n{frame_arrays}\nlv_obj_t *img;\nint current_frame = 0;\n\nvoid setup() {{\n    Serial.begin(115200);\n    lv_init();\n    tft.begin();\n    tft.setRotation(1);\n    lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 10);\n    static lv_disp_drv_t disp_drv;\n    lv_disp_drv_init(&disp_drv);\n    disp_drv.hor_res = screenWidth;\n    disp_drv.ver_res = screenHeight;\n    disp_drv.flush_cb = my_disp_flush;\n    disp_drv.draw_buf = &draw_buf;\n    lv_disp_drv_register(&disp_drv);\n    img = lv_img_create(lv_scr_act());\n    lv_img_set_src(img, {base_name}_frames[0]);\n    lv_obj_center(img);\n}}\n\nvoid loop() {{\n    current_frame = (current_frame + 1) % {frame_count};\n    lv_img_set_src(img, {base_name}_frames[current_frame]);\n    lv_timer_handler();\n    delay({delay_ms});\n}}\n"""
+        return "// Error: Unknown target library."
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ModernGIFConverter(root)
+    root.mainloop()
